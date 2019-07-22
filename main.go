@@ -5,24 +5,27 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
-
-	"github.com/pkg/errors"
 )
 
 var (
-	file       string
-	mode       string
-	showZero   bool
-	onlyReal   bool
-	noBalance  bool
-	noTriggers bool
-	noSort     bool
+	file        string
+	mode        string
+	account     string
+	transaction string
+	showZero    bool
+	onlyReal    bool
+	noBalance   bool
+	noTriggers  bool
+	noSort      bool
 )
 
 func init() {
 	flag.StringVar(&file, "file", "log.txt", "Ledger file to process.")
 	flag.StringVar(&mode, "mode", "balance", "Mode to run in (balance, print, or register).")
+	flag.StringVar(&account, "account", "", "Show only accounts matching this regex filter.")
+	flag.StringVar(&transaction, "transaction", "", "Show only transactions matching this regex filter for their description or ID.")
 	flag.BoolVar(&showZero, "show_zero", false, "Show entries where the balance or amount is zero.")
 	flag.BoolVar(&onlyReal, "only_real", false, "Only use real postings, not virtual.")
 	flag.BoolVar(&noBalance, "no_balance", false, "Don't perform or check balancing (only really useful with print).")
@@ -38,6 +41,16 @@ func main() {
 		panic(err)
 	}
 	defer fd.Close()
+
+	var accountRegexp *regexp.Regexp
+	if account != "" {
+		accountRegexp = regexp.MustCompile(account)
+	}
+
+	var transactionRegexp *regexp.Regexp
+	if transaction != "" {
+		transactionRegexp = regexp.MustCompile(transaction)
+	}
 
 	triggers, transactions, err := parseFile(bufio.NewReader(fd))
 	if err != nil {
@@ -71,8 +84,10 @@ func main() {
 					}
 				}
 
-				if len(tx.Postings) > 1000 {
-					panic(errors.Errorf("posting cycle detected"))
+				if len(tx.Postings) > 100 {
+					fmt.Printf("posting cycle detected\n\n%s\n", tx.String())
+
+					os.Exit(1)
 				}
 			}
 		}
@@ -106,13 +121,17 @@ func main() {
 			fmt.Printf("%s\n", tr.String())
 		}
 		for _, tx := range transactions {
+			if transactionRegexp != nil && !transactionRegexp.MatchString(tx.Description) && !transactionRegexp.MatchString(tx.ID) {
+				continue
+			}
+
 			fmt.Printf("%s\n", tx.String())
 		}
 	case "register":
 		accounts := NewAccounts()
 
 		for _, tx := range transactions {
-			fmt.Printf("%s %s\n", tx.Date.Format("2006-01-02"), tx.Description)
+			first := true
 
 			for _, p := range tx.Postings {
 				if p.Amount.IsZero() && !showZero {
@@ -124,7 +143,21 @@ func main() {
 
 				a := accounts.Get(p.Account)
 				a.Add(*p.Amount)
-				fmt.Printf("  %-40s $%-8s $%-8s\n", a.Name, p.Amount.String(), a.Balance.String())
+
+				if accountRegexp != nil && !accountRegexp.MatchString(a.Name) {
+					continue
+				}
+				if transactionRegexp != nil && !transactionRegexp.MatchString(tx.Description) && !transactionRegexp.MatchString(tx.ID) {
+					continue
+				}
+
+				prefix := ""
+				if first {
+					prefix = fmt.Sprintf("%s %-30s", tx.Date.Format("06-Jan-02"), tx.Description)
+					first = false
+				}
+
+				fmt.Printf("%-42s %-40s %14s %14s\n", prefix, a.Name, "$"+p.Amount.StringFixedBank(2), "$"+a.Balance.StringFixedBank(2))
 			}
 		}
 	case "balance":
@@ -147,14 +180,18 @@ func main() {
 		sort.Strings(names)
 
 		for _, name := range names {
-			if accounts.Get(name).Balance.IsZero() && !showZero {
+			a := accounts.Get(name)
+
+			if a.Balance.IsZero() && !showZero {
 				continue
 			}
 
-			fmt.Printf("%16s %-40s\n", accounts.Get(name).Balance.StringFixedBank(2), name)
+			if accountRegexp == nil || accountRegexp.MatchString(a.Name) {
+				fmt.Printf("%16s %-40s\n", "$"+a.Balance.StringFixedBank(2), a.Name)
+			}
 		}
 
 		fmt.Printf("---------------- Total\n")
-		fmt.Printf("%16s\n", accounts.Balance())
+		fmt.Printf("%16s\n", "$"+accounts.Balance().StringFixedBank(2))
 	}
 }

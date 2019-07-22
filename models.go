@@ -80,13 +80,23 @@ func (l Transactions) Less(a, b int) bool { return l[a].Date.Before(l[b].Date) }
 func (l Transactions) Swap(a, b int)      { l[a], l[b] = l[b], l[a] }
 
 type Transaction struct {
-	Date        time.Time
-	Description string
-	Postings    []*Posting
+	Date          time.Time
+	SecondaryDate *time.Time
+	ID            string
+	Description   string
+	Postings      []*Posting
 }
 
 func (t Transaction) String() string {
-	s := fmt.Sprintf("%s %s\n", t.Date.Format("2006-01-02"), t.Description)
+	s := t.Date.Format("2006-01-02")
+	if t.SecondaryDate != nil {
+		s += "=" + t.SecondaryDate.Format("2006-01-02")
+	}
+	if t.ID != "" {
+		s += " <" + t.ID + ">"
+	}
+	s += " " + t.Description + "\n"
+
 	for _, e := range t.Postings {
 		s += "\t" + e.String() + "\n"
 	}

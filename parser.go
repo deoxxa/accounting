@@ -95,9 +95,9 @@ headerLoop:
 				vm.Set("fy", func(t time.Time) string {
 					switch t.Month() {
 					case time.January, time.February, time.March, time.April, time.May, time.June:
-						return fmt.Sprintf("FY%d/%d", t.Year()-1, t.Year())
+						return fmt.Sprintf("FY%d%d", (t.Year()-1)%100, t.Year()%100)
 					default:
-						return fmt.Sprintf("FY%d/%d", t.Year(), t.Year()+1)
+						return fmt.Sprintf("FY%d%d", t.Year()%100, (t.Year()+1)%100)
 					}
 				})
 
@@ -175,12 +175,25 @@ func parseTransaction(rd *bufio.Reader) (*Transaction, error) {
 		a = append(a, "")
 	}
 
-	date, err := time.Parse("2006-01-02", a[0])
+	m := regexp.MustCompile("^(?:<(.+?)> *)?(.+?)$").FindStringSubmatch(a[1])
+
+	tr := Transaction{ID: m[1], Description: m[2]}
+
+	bits := strings.SplitN(a[0], "=", 2)
+
+	date, err := time.Parse("2006-01-02", bits[0])
 	if err != nil {
 		return nil, errors.Wrap(err, "parseTransaction")
 	}
+	tr.Date = date
 
-	var postings []*Posting
+	if len(bits) > 1 {
+		t, err := time.Parse("2006-01-02", bits[1])
+		if err != nil {
+			return nil, errors.Wrap(err, "parseTransaction")
+		}
+		tr.SecondaryDate = &t
+	}
 
 	for {
 		l, err := rd.ReadString('\n')
@@ -198,14 +211,10 @@ func parseTransaction(rd *bufio.Reader) (*Transaction, error) {
 			return nil, errors.Wrap(err, "parseTransaction")
 		}
 
-		postings = append(postings, p)
+		tr.Postings = append(tr.Postings, p)
 	}
 
-	return &Transaction{
-		Date:        date,
-		Description: a[1],
-		Postings:    postings,
-	}, nil
+	return &tr, nil
 }
 
 func parsePosting(l string) (*Posting, error) {
